@@ -1,0 +1,51 @@
+name: Deploy to EC2
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-ec2
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Build and restart on EC2
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@v1.2.2
+        env:
+          APP_DIR: /home/ubuntu/next-deployment
+          BRANCH: ${{ github.ref_name }}
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          command_timeout: 20m
+          script_stop: true
+          envs: APP_DIR,BRANCH
+          script: |
+            set -euo pipefail
+
+            if [ -s "$HOME/.nvm/nvm.sh" ]; then
+              . "$HOME/.nvm/nvm.sh"
+            fi
+
+            cd "$APP_DIR"
+            git fetch origin "$BRANCH"
+            git checkout "$BRANCH"
+            git reset --hard "origin/$BRANCH"
+
+            npm ci
+            npm run build
+
+            if pm2 describe next-deployment >/dev/null 2>&1; then
+              pm2 restart next-deployment --update-env
+            else
+              pm2 start npm --name next-deployment -- start -- -p 3000
+            fi
+
+            pm2 save
